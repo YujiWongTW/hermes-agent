@@ -201,10 +201,78 @@ class TestAppMentionHandler:
         slash_matcher = registered_commands[0]
         import re as _re
         assert isinstance(slash_matcher, _re.Pattern)
-        for expected in ("/hermes", "/btw", "/stop", "/model", "/help"):
+        for expected in (
+            "/hermes",
+            "/btw",
+            "/stop",
+            "/model",
+            "/help",
+            "/openrouter_balance",
+            "/codex_usage",
+        ):
             assert slash_matcher.match(expected), (
                 f"Slack slash regex does not match {expected}"
             )
+
+
+class TestSlackDirectBypassCommands:
+    @pytest.mark.asyncio
+    async def test_codex_usage_slash_runs_local_helper_without_agent(self, adapter):
+        adapter._send_slash_ephemeral = AsyncMock(return_value=SendResult(success=True))
+        completed = MagicMock(returncode=0, stdout="Codex usage: 42%\n", stderr="")
+
+        command = {
+            "command": "/codex_usage",
+            "text": "",
+            "user_id": "U123",
+            "channel_id": "D123",
+            "team_id": "T123",
+            "response_url": "https://hooks.slack.test/response",
+        }
+
+        with patch("gateway.platforms.slack.subprocess.run", return_value=completed) as run:
+            await adapter._handle_slash_command(command)
+
+        run.assert_called_once_with(
+            ["codex-usage"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        adapter._send_slash_ephemeral.assert_awaited_once_with(
+            {"response_url": "https://hooks.slack.test/response"},
+            "Codex usage: 42%",
+        )
+        adapter.handle_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_openrouter_balance_slash_runs_local_helper_without_agent(self, adapter):
+        adapter._send_slash_ephemeral = AsyncMock(return_value=SendResult(success=True))
+        completed = MagicMock(returncode=0, stdout="OpenRouter balance: $12\n", stderr="")
+
+        command = {
+            "command": "/openrouter_balance",
+            "text": "",
+            "user_id": "U123",
+            "channel_id": "D123",
+            "team_id": "T123",
+            "response_url": "https://hooks.slack.test/response",
+        }
+
+        with patch("gateway.platforms.slack.subprocess.run", return_value=completed) as run:
+            await adapter._handle_slash_command(command)
+
+        run.assert_called_once_with(
+            ["openrouter-balance"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        adapter._send_slash_ephemeral.assert_awaited_once_with(
+            {"response_url": "https://hooks.slack.test/response"},
+            "OpenRouter balance: $12",
+        )
+        adapter.handle_message.assert_not_awaited()
 
 
 class TestSlackConnectCleanup:

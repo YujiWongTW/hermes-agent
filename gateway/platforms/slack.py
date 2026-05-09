@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Any, Tuple, List
@@ -2778,6 +2779,14 @@ class SlackAdapter(BasePlatformAdapter):
         if team_id and channel_id:
             self._channel_team[channel_id] = team_id
 
+        direct_bypass_commands = {
+            "codex_usage": "codex-usage",
+            "openrouter_balance": "openrouter-balance",
+        }
+        if slash_name in direct_bypass_commands:
+            await self._handle_direct_bypass_command(command, direct_bypass_commands[slash_name])
+            return
+
         if slash_name in {"hermes", ""}:
             # Legacy /hermes <subcommand> [args] routing + free-form questions.
             # Empty slash_name falls into this branch for backward compat
@@ -2839,6 +2848,39 @@ class SlackAdapter(BasePlatformAdapter):
             await self.handle_message(event)
         finally:
             _slash_user_id.reset(_slash_user_id_token)
+
+    async def _handle_direct_bypass_command(self, command: dict, executable: str) -> None:
+        """Run a local usage/balance helper for a Slack slash command.
+
+        These shortcuts mirror Telegram's model-less bypass commands. They
+        return without creating or interrupting an agent session.
+        """
+        loop = asyncio.get_running_loop()
+
+        def _run() -> str:
+            try:
+                result = subprocess.run(
+                    [executable],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode == 0:
+                    return result.stdout.strip() or "查詢完成，但沒有輸出。"
+                stderr = (result.stderr or result.stdout or "").strip()
+                return f"查詢失敗：{stderr[:200]}"
+            except Exception as exc:  # pragma: no cover - defensive
+                return f"查詢失敗：{exc}"
+
+        reply = await loop.run_in_executor(None, _run)
+        response_url = command.get("response_url", "")
+        if response_url:
+            await self._send_slash_ephemeral({"response_url": response_url}, reply)
+            return
+
+        channel_id = command.get("channel_id", "")
+        if channel_id:
+            await self.send(channel_id, reply)
 
     def _has_active_session_for_thread(
         self,

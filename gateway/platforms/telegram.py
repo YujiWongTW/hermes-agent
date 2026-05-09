@@ -1697,6 +1697,19 @@ class TelegramAdapter(BasePlatformAdapter):
                 # payload size limit (~4KB total).  Limit to 30 core commands
                 # to stay well under the threshold while covering all categories.
                 menu_commands, hidden_count = telegram_menu_commands(max_commands=MAX_COMMANDS_PER_SCOPE)
+                # --- Bypass commands: direct, model-less shortcuts ---
+                # Put these first so Telegram clients show them near the top
+                # instead of burying them after dozens of skill commands.
+                bypass_commands = [
+                    ("openrouter_balance", "Check OpenRouter balance"),
+                    ("codex_usage", "Check Codex API usage"),
+                ]
+                bypass_names = {name for name, _desc in bypass_commands}
+                menu_commands = bypass_commands + [
+                    (name, desc) for name, desc in menu_commands
+                    if name not in bypass_names
+                ]
+                menu_commands = menu_commands[:MAX_COMMANDS_PER_SCOPE]
                 bot_commands = [BotCommand(name, desc) for name, desc in menu_commands]
                 # Register for all scopes independently — Telegram picks the
                 # narrowest matching scope per chat type (forum topics fall
@@ -4961,12 +4974,50 @@ class TelegramAdapter(BasePlatformAdapter):
             if self._should_observe_unmentioned_group_message(msg):
                 self._observe_unmentioned_group_message(msg, MessageType.TEXT, update_id=update.update_id)
             return
-        await self._ensure_forum_commands(update.message)
+        await self._ensure_forum_commands(msg)
+
+        # --- Bypass: direct commands that should NOT go through the model ---
+        text = msg.text or ""
+        stripped_text = text.strip().lower()
+        if stripped_text == "codex-usage":
+            await self._handle_direct_bypass_command(update, "codex-usage")
+            return
+        if stripped_text == "openrouter-balance":
+            await self._handle_direct_bypass_command(update, "openrouter-balance")
+            return
 
         event = self._build_message_event(msg, MessageType.TEXT, update_id=update.update_id)
         event.text = self._clean_bot_trigger_text(event.text)
         event = self._apply_telegram_group_observe_attribution(event)
         self._enqueue_text_event(event)
+
+    async def _handle_direct_codex_usage(self, update: Update) -> None:
+        """Bypass model — run codex-usage script directly and reply."""
+        await self._handle_direct_bypass_command(update, "codex-usage")
+
+    async def _handle_direct_bypass_command(self, update: Update, command: str) -> None:
+        """Bypass model — run a direct command script and reply."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                [command],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            reply = result.stdout.strip() if result.returncode == 0 else f"查詢失敗：{result.stderr.strip()[:200]}"
+        except Exception as exc:
+            reply = f"查詢失敗：{exc}"
+
+        try:
+            await self._bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=reply,
+                parse_mode=None,
+                reply_to_message_id=update.message.message_id,
+            )
+        except Exception as e:
+            logger.warning("[%s] %s bypass reply failed: %s", self.name, command, e)
 
     async def _handle_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle incoming command messages."""
@@ -4976,6 +5027,18 @@ class TelegramAdapter(BasePlatformAdapter):
         if not self._should_process_message(msg, is_command=True):
             return
         await self._ensure_forum_commands(msg)
+
+        text = msg.text.strip()
+        # Extract bare command name: /cmd or /cmd@botname
+        cmd_match = re.match(r'^/([a-z0-9_]+)(?:@\w+)?\s*', text, re.IGNORECASE)
+        if cmd_match:
+            cmd_name = cmd_match.group(1).lower()
+            if cmd_name == "codex_usage":
+                await self._handle_direct_bypass_command(update, "codex-usage")
+                return
+            if cmd_name == "openrouter_balance":
+                await self._handle_direct_bypass_command(update, "openrouter-balance")
+                return
 
         event = self._build_message_event(msg, MessageType.COMMAND, update_id=update.update_id)
         event.text = self._clean_bot_trigger_text(event.text)
