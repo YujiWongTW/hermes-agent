@@ -1703,6 +1703,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 bypass_commands = [
                     ("openrouter_balance", "Check OpenRouter balance"),
                     ("codex_usage", "Check Codex API usage"),
+                    ("claude_usage", "Check Claude account usage"),
                 ]
                 bypass_names = {name for name, _desc in bypass_commands}
                 menu_commands = bypass_commands + [
@@ -4982,6 +4983,9 @@ class TelegramAdapter(BasePlatformAdapter):
         if stripped_text == "codex-usage":
             await self._handle_direct_bypass_command(update, "codex-usage")
             return
+        if stripped_text == "claude-usage":
+            await self._handle_direct_bypass_command(update, "claude-usage")
+            return
         if stripped_text == "openrouter-balance":
             await self._handle_direct_bypass_command(update, "openrouter-balance")
             return
@@ -5035,6 +5039,9 @@ class TelegramAdapter(BasePlatformAdapter):
             cmd_name = cmd_match.group(1).lower()
             if cmd_name == "codex_usage":
                 await self._handle_direct_bypass_command(update, "codex-usage")
+                return
+            if cmd_name == "claude_usage":
+                await self._handle_direct_bypass_command(update, "claude-usage")
                 return
             if cmd_name == "openrouter_balance":
                 await self._handle_direct_bypass_command(update, "openrouter-balance")

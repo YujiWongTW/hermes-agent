@@ -204,6 +204,8 @@ COMMAND_REGISTRY: list[CommandDef] = [
                gateway_only=True),
     CommandDef("codex_usage", "Check Codex API usage", "Info",
                gateway_only=True),
+    CommandDef("claude_usage", "Check Claude account usage", "Info",
+               gateway_only=True),
     CommandDef("insights", "Show usage insights and analytics", "Info",
                args_hint="[days]"),
     CommandDef("platforms", "Show gateway/messaging platform status", "Info",

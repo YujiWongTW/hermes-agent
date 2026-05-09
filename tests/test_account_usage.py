@@ -6,6 +6,7 @@ from agent.account_usage import (
     fetch_account_usage,
     render_account_usage_lines,
 )
+from hermes_cli.account_usage_command import main as account_usage_main
 
 
 class _Response:
@@ -95,6 +96,53 @@ def test_fetch_account_usage_codex(monkeypatch):
     assert "Credits balance: $12.50" in snapshot.details
 
 
+def test_fetch_account_usage_anthropic_oauth(monkeypatch):
+    monkeypatch.setattr("agent.account_usage.resolve_anthropic_token", lambda: "oauth-token")
+    monkeypatch.setattr("agent.account_usage._is_oauth_token", lambda token: True)
+    monkeypatch.setattr(
+        "agent.account_usage.httpx.Client",
+        lambda timeout=15.0: _Client(
+            {
+                "five_hour": {
+                    "utilization": 0.12,
+                    "resets_at": "2030-03-17T17:46:40Z",
+                },
+                "seven_day": {
+                    "utilization": 45,
+                    "resets_at": 1_900_500_000,
+                },
+                "extra_usage": {
+                    "is_enabled": True,
+                    "used_credits": 1.25,
+                    "monthly_limit": 20.0,
+                    "currency": "USD",
+                },
+            }
+        ),
+    )
+
+    snapshot = fetch_account_usage("anthropic")
+
+    assert snapshot is not None
+    assert snapshot.provider == "anthropic"
+    assert snapshot.windows[0].label == "Current session"
+    assert snapshot.windows[0].used_percent == 12.0
+    assert snapshot.windows[1].label == "Current week"
+    assert snapshot.windows[1].used_percent == 45.0
+    assert "Extra usage: 1.25 / 20.00 USD" in snapshot.details
+
+
+def test_fetch_account_usage_anthropic_requires_oauth(monkeypatch):
+    monkeypatch.setattr("agent.account_usage.resolve_anthropic_token", lambda: "sk-ant-api03")
+    monkeypatch.setattr("agent.account_usage._is_oauth_token", lambda token: False)
+
+    snapshot = fetch_account_usage("anthropic")
+
+    assert snapshot is not None
+    assert snapshot.unavailable_reason
+    assert "OAuth-backed Claude accounts" in snapshot.unavailable_reason
+
+
 def test_render_account_usage_lines_includes_reset_and_provider():
     snapshot = AccountUsageSnapshot(
         provider="openai-codex",
@@ -116,6 +164,26 @@ def test_render_account_usage_lines_includes_reset_and_provider():
     assert "openai-codex (Pro)" in lines[1]
     assert "Session: 75% remaining (25% used)" in lines[2]
     assert "Credits balance: $9.99" in lines[3]
+
+
+def test_account_usage_command_uses_shared_renderer(monkeypatch, capsys):
+    snapshot = AccountUsageSnapshot(
+        provider="anthropic",
+        source="oauth_usage_api",
+        fetched_at=datetime.now(timezone.utc),
+        windows=(AccountUsageWindow(label="Current session", used_percent=12),),
+    )
+    monkeypatch.setattr(
+        "hermes_cli.account_usage_command.fetch_account_usage",
+        lambda provider: snapshot if provider == "anthropic" else None,
+    )
+
+    assert account_usage_main(["claude"]) == 0
+
+    out = capsys.readouterr().out
+    assert "📈 Account limits" in out
+    assert "Provider: anthropic" in out
+    assert "Current session: 88% remaining (12% used)" in out
 
 
 def test_fetch_account_usage_openrouter_uses_limit_remaining_and_ignores_deprecated_rate_limit(monkeypatch):

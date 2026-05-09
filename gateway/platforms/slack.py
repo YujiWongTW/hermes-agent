@@ -2781,6 +2781,7 @@ class SlackAdapter(BasePlatformAdapter):
 
         direct_bypass_commands = {
             "codex_usage": "codex-usage",
+            "claude_usage": "claude-usage",
             "openrouter_balance": "openrouter-balance",
         }
         if slash_name in direct_bypass_commands:

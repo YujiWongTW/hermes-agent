@@ -209,6 +209,7 @@ class TestAppMentionHandler:
             "/help",
             "/openrouter_balance",
             "/codex_usage",
+            "/claude_usage",
         ):
             assert slash_matcher.match(expected), (
                 f"Slack slash regex does not match {expected}"
@@ -271,6 +272,35 @@ class TestSlackDirectBypassCommands:
         adapter._send_slash_ephemeral.assert_awaited_once_with(
             {"response_url": "https://hooks.slack.test/response"},
             "OpenRouter balance: $12",
+        )
+        adapter.handle_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_claude_usage_slash_runs_local_helper_without_agent(self, adapter):
+        adapter._send_slash_ephemeral = AsyncMock(return_value=SendResult(success=True))
+        completed = MagicMock(returncode=0, stdout="Claude usage: 12%\n", stderr="")
+
+        command = {
+            "command": "/claude_usage",
+            "text": "",
+            "user_id": "U123",
+            "channel_id": "D123",
+            "team_id": "T123",
+            "response_url": "https://hooks.slack.test/response",
+        }
+
+        with patch("gateway.platforms.slack.subprocess.run", return_value=completed) as run:
+            await adapter._handle_slash_command(command)
+
+        run.assert_called_once_with(
+            ["claude-usage"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        adapter._send_slash_ephemeral.assert_awaited_once_with(
+            {"response_url": "https://hooks.slack.test/response"},
+            "Claude usage: 12%",
         )
         adapter.handle_message.assert_not_awaited()
 
