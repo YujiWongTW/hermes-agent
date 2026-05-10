@@ -429,6 +429,10 @@ PLATFORM_HINTS = {
         "(.png, .jpg, .webp) appear as photos, audio (.ogg) sends as voice "
         "bubbles, and videos (.mp4) play inline. You can also include image "
         "URLs in markdown format ![alt](url) and they will be sent as native photos."
+        "To send multiple separate messages in one response, insert `<<<SPLIT_MSG>>>` "
+        "between parts. The gateway splits on this marker and sends each part as an "
+        "independent Telegram message. Use this to separate your main reply from "
+        "supplementary content such as the daily English note."
     ),
     "discord": (
         "You are in a Discord server or group chat communicating with your user. "

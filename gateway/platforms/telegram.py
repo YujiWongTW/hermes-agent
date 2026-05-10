@@ -347,6 +347,10 @@ class TelegramAdapter(BasePlatformAdapter):
     # Threshold for detecting Telegram client-side message splits.
     # When a chunk is near this limit, a continuation is almost certain.
     _SPLIT_THRESHOLD = 4000
+    # Marker used by the model to request splitting the assistant response
+    # into separate Telegram messages. Any content after this marker is sent
+    # as a new message rather than a continuation/edit.
+    _SPLIT_MSG_MARKER = "<<<SPLIT_MSG>>>"
     MEDIA_GROUP_WAIT_SECONDS = 0.8
     _GENERAL_TOPIC_THREAD_ID = "1"
 
@@ -1834,6 +1838,32 @@ class TelegramAdapter(BasePlatformAdapter):
         # Skip whitespace-only text to prevent Telegram 400 empty-text errors.
         if not content or not content.strip():
             return SendResult(success=True, message_id=None)
+
+        parts = content.split(self._SPLIT_MSG_MARKER)
+        if len(parts) > 1:
+            all_ids: List[str] = []
+            for idx, part in enumerate(parts):
+                part = part.strip()
+                if not part:
+                    continue
+                result = await self.send(
+                    chat_id,
+                    part,
+                    reply_to=reply_to if idx == 0 else None,
+                    metadata=metadata,
+                )
+                if not result.success:
+                    return result
+                raw_ids = (result.raw_response or {}).get("message_ids") if result.raw_response else None
+                if isinstance(raw_ids, list):
+                    all_ids.extend(str(mid) for mid in raw_ids)
+                elif result.message_id:
+                    all_ids.append(str(result.message_id))
+            return SendResult(
+                success=True,
+                message_id=all_ids[0] if all_ids else None,
+                raw_response={"message_ids": all_ids},
+            )
         
         try:
             # Format and split message if needed
