@@ -67,49 +67,95 @@ def _parse_dt(value: Any) -> Optional[datetime]:
 
 def _format_reset(dt: Optional[datetime]) -> str:
     if not dt:
-        return "unknown"
+        return "未知"
     local_dt = dt.astimezone()
     delta = dt - _utc_now()
     total_seconds = int(delta.total_seconds())
     if total_seconds <= 0:
-        return f"now ({local_dt.strftime('%Y-%m-%d %H:%M %Z')})"
+        return f"已重置（{local_dt.strftime('%m/%d %H:%M')}）"
     hours, rem = divmod(total_seconds, 3600)
     minutes = rem // 60
     if hours >= 24:
         days, hours = divmod(hours, 24)
-        rel = f"in {days}d {hours}h"
+        rel = f"{days} 天 {hours} 小時"
     elif hours > 0:
-        rel = f"in {hours}h {minutes}m"
+        rel = f"{hours} 小時 {minutes} 分"
+    elif minutes > 0:
+        rel = f"{minutes} 分"
     else:
-        rel = f"in {minutes}m"
-    return f"{rel} ({local_dt.strftime('%Y-%m-%d %H:%M %Z')})"
+        rel = "即將"
+    return f"{rel}後（{local_dt.strftime('%m/%d %H:%M')}）"
+
+
+_PROVIDER_NAME = {
+    "openai-codex": "Codex",
+    "anthropic": "Claude",
+    "openrouter": "OpenRouter",
+}
+
+_WINDOW_LABEL = {
+    "Session": "5 小時額度",
+    "Current session": "5 小時額度",
+    "Weekly": "週額度",
+    "Current week": "本週額度",
+    "Opus week": "Opus 週額度",
+    "Sonnet week": "Sonnet 週額度",
+    "API key quota": "API Key 額度",
+}
+
+
+def _usage_status_emoji(used_percent: Optional[float]) -> str:
+    """Return an at-a-glance status emoji for usage/quota lines."""
+    if used_percent is None:
+        return "⚪"
+    used = float(used_percent)
+    if used >= 90:
+        return "🔴"
+    if used >= 70:
+        return "🟡"
+    return "🟢"
 
 
 def render_account_usage_lines(snapshot: Optional[AccountUsageSnapshot], *, markdown: bool = False) -> list[str]:
     if not snapshot:
         return []
-    header = f"📈 {'**' if markdown else ''}{snapshot.title}{'**' if markdown else ''}"
+
+    provider_name = _PROVIDER_NAME.get(snapshot.provider, snapshot.provider)
+    header = f"📊 {'**' if markdown else ''}{provider_name} 用量{'**' if markdown else ''}"
     lines = [header]
+
     if snapshot.plan:
-        lines.append(f"Provider: {snapshot.provider} ({snapshot.plan})")
-    else:
-        lines.append(f"Provider: {snapshot.provider}")
+        lines.append(f"方案：{snapshot.plan}")
+
     for window in snapshot.windows:
+        label = _WINDOW_LABEL.get(window.label, window.label)
         if window.used_percent is None:
-            base = f"{window.label}: unavailable"
-        else:
-            remaining = max(0, round(100 - float(window.used_percent)))
-            used = max(0, round(float(window.used_percent)))
-            base = f"{window.label}: {remaining}% remaining ({used}% used)"
+            lines.append(f"⚪ {label}：暫無資料")
+            continue
+        remaining = max(0, round(100 - float(window.used_percent)))
+        used = max(0, round(float(window.used_percent)))
+        status = _usage_status_emoji(window.used_percent)
+        line = f"{status} {label}：已用 {used}%｜剩 {remaining}%"
         if window.reset_at:
-            base += f" • resets {_format_reset(window.reset_at)}"
+            line += f"\n  重置：{_format_reset(window.reset_at)}"
         elif window.detail:
-            base += f" • {window.detail}"
-        lines.append(base)
+            # Keep English detail strings as-is (they come from upstream APIs)
+            line += f"\n  {window.detail}"
+        lines.append(line)
+
     for detail in snapshot.details:
-        lines.append(detail)
+        if detail.startswith("Credits balance: "):
+            lines.append(f"💰 餘額：{detail[len('Credits balance: '):]}")
+        elif detail.startswith("Extra usage: "):
+            lines.append(f"💸 額外用量：{detail[len('Extra usage: '):]}")
+        elif detail.startswith("API key usage: "):
+            lines.append(f"💸 用量明細：{detail[len('API key usage: '):]}")
+        else:
+            lines.append(detail)
+
     if snapshot.unavailable_reason:
-        lines.append(f"Unavailable: {snapshot.unavailable_reason}")
+        lines.append(f"🔴 無法查詢：{snapshot.unavailable_reason}")
+
     return lines
 
 

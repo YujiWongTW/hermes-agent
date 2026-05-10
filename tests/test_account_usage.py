@@ -160,10 +160,10 @@ def test_render_account_usage_lines_includes_reset_and_provider():
     )
     lines = render_account_usage_lines(snapshot)
 
-    assert lines[0] == "📈 Account limits"
-    assert "openai-codex (Pro)" in lines[1]
-    assert "Session: 75% remaining (25% used)" in lines[2]
-    assert "Credits balance: $9.99" in lines[3]
+    assert lines[0] == "📊 Codex 用量"
+    assert "方案：Pro" in lines[1]
+    assert "🟢 5 小時額度：已用 25%｜剩 75%" in lines[2]
+    assert "💰 餘額：$9.99" in lines[3]
 
 
 def test_account_usage_command_uses_shared_renderer(monkeypatch, capsys):
@@ -181,9 +181,8 @@ def test_account_usage_command_uses_shared_renderer(monkeypatch, capsys):
     assert account_usage_main(["claude"]) == 0
 
     out = capsys.readouterr().out
-    assert "📈 Account limits" in out
-    assert "Provider: anthropic" in out
-    assert "Current session: 88% remaining (12% used)" in out
+    assert "📊 Claude 用量" in out
+    assert "🟢 5 小時額度：已用 12%｜剩 88%" in out
 
 
 def test_fetch_account_usage_openrouter_uses_limit_remaining_and_ignores_deprecated_rate_limit(monkeypatch):
