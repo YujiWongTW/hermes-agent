@@ -96,6 +96,51 @@ def test_fetch_account_usage_codex(monkeypatch):
     assert "Credits balance: $12.50" in snapshot.details
 
 
+def test_fetch_account_usage_codex_falls_back_to_credential_pool(monkeypatch):
+    class _Entry:
+        runtime_api_key = "pool-access-token"
+        runtime_base_url = "https://chatgpt.com/backend-api/codex"
+        last_refresh = "2026-05-20T00:00:00Z"
+
+    class _Pool:
+        def select(self):
+            return _Entry()
+
+    captured = {}
+
+    class _CapturingClient(_Client):
+        def get(self, url, headers=None):
+            captured["url"] = url
+            captured["headers"] = headers or {}
+            return super().get(url, headers=headers)
+
+    def _missing_auth(*args, **kwargs):
+        raise RuntimeError("missing provider singleton")
+
+    monkeypatch.setattr("agent.account_usage._read_codex_tokens", _missing_auth)
+    monkeypatch.setattr("agent.account_usage.resolve_codex_runtime_credentials", _missing_auth)
+    monkeypatch.setattr("agent.credential_pool.load_pool", lambda provider: _Pool())
+    monkeypatch.setattr("agent.account_usage._read_codex_account_id_from_cli_auth", lambda: "acct_pool")
+    monkeypatch.setattr(
+        "agent.account_usage.httpx.Client",
+        lambda timeout=15.0: _CapturingClient(
+            {
+                "rate_limit": {
+                    "primary_window": {"used_percent": 10, "reset_at": 1_900_000_000},
+                }
+            }
+        ),
+    )
+
+    snapshot = fetch_account_usage("openai-codex")
+
+    assert snapshot is not None
+    assert snapshot.windows[0].used_percent == 10.0
+    assert captured["url"] == "https://chatgpt.com/backend-api/wham/usage"
+    assert captured["headers"]["Authorization"] == "Bearer pool-access-token"
+    assert captured["headers"]["ChatGPT-Account-Id"] == "acct_pool"
+
+
 def test_fetch_account_usage_anthropic_oauth(monkeypatch):
     monkeypatch.setattr("agent.account_usage.resolve_anthropic_token", lambda: "oauth-token")
     monkeypatch.setattr("agent.account_usage._is_oauth_token", lambda token: True)

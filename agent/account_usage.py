@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
+
+import json
+import os
 
 import httpx
 
@@ -170,11 +174,58 @@ def _resolve_codex_usage_url(base_url: str) -> str:
     return normalized + "/api/codex/usage"
 
 
+def _read_codex_account_id_from_cli_auth() -> Optional[str]:
+    """Read only the ChatGPT account id from Codex CLI auth, never tokens."""
+    codex_home = os.getenv("CODEX_HOME", "").strip() or str(Path.home() / ".codex")
+    auth_path = Path(codex_home).expanduser() / "auth.json"
+    try:
+        payload = json.loads(auth_path.read_text())
+    except Exception:
+        return None
+    tokens = payload.get("tokens")
+    if not isinstance(tokens, dict):
+        return None
+    account_id = str(tokens.get("account_id", "") or "").strip()
+    return account_id or None
+
+
+def _resolve_codex_usage_credentials() -> tuple[dict[str, Any], Optional[str]]:
+    """Resolve Codex usage credentials from auth state or the credential pool."""
+    account_id: Optional[str] = None
+    try:
+        token_data = _read_codex_tokens()
+        tokens = token_data.get("tokens") or {}
+        account_id = str(tokens.get("account_id", "") or "").strip() or None
+        creds = resolve_codex_runtime_credentials(refresh_if_expiring=True)
+        return creds, account_id
+    except Exception:
+        pass
+
+    # Modern Hermes installations may have Codex OAuth only in the credential
+    # pool (``credential_pool.openai-codex``) with no legacy
+    # ``providers.openai-codex`` singleton.  Use the same pool selection path
+    # as inference so `/codex_usage` keeps working after migration.
+    try:
+        from agent.credential_pool import load_pool
+
+        entry = load_pool("openai-codex").select()
+    except Exception:
+        entry = None
+    if entry is None or not str(entry.runtime_api_key or "").strip():
+        raise RuntimeError("No Codex credentials stored.")
+
+    return {
+        "provider": "openai-codex",
+        "base_url": entry.runtime_base_url or "https://chatgpt.com/backend-api/codex",
+        "api_key": str(entry.runtime_api_key or "").strip(),
+        "source": "credential-pool",
+        "last_refresh": entry.last_refresh,
+        "auth_mode": "chatgpt",
+    }, account_id or _read_codex_account_id_from_cli_auth()
+
+
 def _fetch_codex_account_usage() -> Optional[AccountUsageSnapshot]:
-    creds = resolve_codex_runtime_credentials(refresh_if_expiring=True)
-    token_data = _read_codex_tokens()
-    tokens = token_data.get("tokens") or {}
-    account_id = str(tokens.get("account_id", "") or "").strip() or None
+    creds, account_id = _resolve_codex_usage_credentials()
     headers = {
         "Authorization": f"Bearer {creds['api_key']}",
         "Accept": "application/json",
