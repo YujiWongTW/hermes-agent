@@ -5044,12 +5044,18 @@ class TelegramAdapter(BasePlatformAdapter):
             reply = f"查詢失敗：{exc}"
 
         try:
-            await self._bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=reply,
-                parse_mode=None,
-                reply_to_message_id=update.message.message_id,
-            )
+            kwargs = {
+                "chat_id": update.effective_chat.id,
+                "text": reply,
+                "parse_mode": None,
+                "reply_to_message_id": update.message.message_id,
+            }
+            thread_id = getattr(update.message, "message_thread_id", None)
+            if thread_id is not None:
+                tid = self._message_thread_id_for_send(str(thread_id))
+                if tid is not None:
+                    kwargs["message_thread_id"] = tid
+            await self._bot.send_message(**kwargs)
         except Exception as e:
             logger.warning("[%s] %s bypass reply failed: %s", self.name, command, e)
 
